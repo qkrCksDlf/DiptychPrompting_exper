@@ -295,15 +295,15 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Build pipeline
-    controlnet = FluxControlNetModel.from_pretrained("alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", torch_dtype=torch.bfloat16)
-    pipe = FluxControlNetInpaintingPipeline.from_pretrained(
-        "black-forest-labs/FLUX.1-dev",
-        controlnet=controlnet,
-        torch_dtype=torch.bfloat16
-    ).to("cuda")
-    pipe.transformer.to(torch.bfloat16)
-    pipe.controlnet.to(torch.bfloat16)
-    base_attn_procs = pipe.transformer.attn_processors.copy()
+    # controlnet = FluxControlNetModel.from_pretrained("alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", torch_dtype=torch.bfloat16)
+    # pipe = FluxControlNetInpaintingPipeline.from_pretrained(
+    #     "black-forest-labs/FLUX.1-dev",
+    #     controlnet=controlnet,
+    #     torch_dtype=torch.bfloat16
+    # ).to("cuda")
+    # pipe.transformer.to(torch.bfloat16)
+    # pipe.controlnet.to(torch.bfloat16)
+    # base_attn_procs = pipe.transformer.attn_processors.copy()
 
     detector_id = "IDEA-Research/grounding-dino-tiny"
     segmenter_id = "facebook/sam-vit-base"
@@ -367,6 +367,22 @@ if __name__ == '__main__':
 
     ctrl_scale=args.ctrl_scale
     segmented_image = segment_image(reference_image, subject_name)
+    
+    del segmentator
+    del segment_processor
+    del object_detector
+    torch.cuda.empty_cache()
+
+    controlnet = FluxControlNetModel.from_pretrained("alimama-creative/FLUX.1-dev-Controlnet-Inpainting-Beta", torch_dtype=torch.bfloat16)
+    pipe = FluxControlNetInpaintingPipeline.from_pretrained(
+        "black-forest-labs/FLUX.1-dev",
+        controlnet=controlnet,
+        torch_dtype=torch.bfloat16
+    ).to("cuda")
+    pipe.transformer.to(torch.bfloat16)
+    pipe.controlnet.to(torch.bfloat16)
+    base_attn_procs = pipe.transformer.attn_processors.copy()
+    
     mask_image = np.concatenate([np.zeros((height, width, 3)), np.ones((height, width, 3))*255], axis=1)
     mask_image = Image.fromarray(mask_image.astype(np.uint8))
     diptych_image_prompt = make_diptych(segmented_image)
