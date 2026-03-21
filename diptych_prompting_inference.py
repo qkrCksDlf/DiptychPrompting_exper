@@ -186,7 +186,7 @@ class CustomFluxAttnProcessor2_0:
         self.step = 0
         self.attn_enforce = attn_enforce
 
-    def __call__(
+   def __call__(
         self,
         attn: Attention,
         hidden_states: torch.FloatTensor,
@@ -197,7 +197,7 @@ class CustomFluxAttnProcessor2_0:
         self.step += 1
         batch_size, _, _ = hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
 
-        # `sample` projections.
+        # `sample` projections. (이미지)
         query = attn.to_q(hidden_states)
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
@@ -214,9 +214,14 @@ class CustomFluxAttnProcessor2_0:
         if attn.norm_k is not None:
             key = attn.norm_k(key)
 
-        # the attention in FluxSingleTransformerBlock does not use `encoder_hidden_states`
+        # ✅ [수정 2] RoPE를 텍스트와 합치기 전에 '이미지' 쿼리/키에만 먼저 적용!
+        if image_rotary_emb is not None:
+            from diffusers.models.embeddings import apply_rotary_emb
+            query = apply_rotary_emb(query, image_rotary_emb)
+            key = apply_rotary_emb(key, image_rotary_emb)
+
         if encoder_hidden_states is not None:
-            # `context` projections.
+            # `context` projections. (텍스트)
             encoder_hidden_states_query_proj = attn.add_q_proj(encoder_hidden_states)
             encoder_hidden_states_key_proj = attn.add_k_proj(encoder_hidden_states)
             encoder_hidden_states_value_proj = attn.add_v_proj(encoder_hidden_states)
@@ -236,26 +241,25 @@ class CustomFluxAttnProcessor2_0:
             if attn.norm_added_k is not None:
                 encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj)
 
-            # attention
+            # attention을 위해 텍스트와 이미지를 여기서 합침
             query = torch.cat([encoder_hidden_states_query_proj, query], dim=2)
             key = torch.cat([encoder_hidden_states_key_proj, key], dim=2)
             value = torch.cat([encoder_hidden_states_value_proj, value], dim=2)
-
-        if image_rotary_emb is not None:
-            from diffusers.models.embeddings import apply_rotary_emb
-
-            query = apply_rotary_emb(query, image_rotary_emb)
-            key = apply_rotary_emb(key, image_rotary_emb)
-
 
         ######### attn_enforce
         if self.attn_enforce != 1.0:
             attn_probs = (torch.einsum('bhqd,bhkd->bhqk', query, key) * attn.scale).softmax(dim=-1)
             img_attn_probs = attn_probs[:, :, -self.num_pixels:, -self.num_pixels:]
             img_attn_probs = img_attn_probs.reshape((batch_size, attn.heads, self.height, self.width, self.height, self.width))
+            
+            # 우측(생성부) -> 좌측(레퍼런스) 어텐션 강제 증폭
             img_attn_probs[:, :, :, self.width//2:, :, :self.width//2] *= self.attn_enforce
             img_attn_probs = img_attn_probs.reshape((batch_size, attn.heads, self.num_pixels, self.num_pixels))
             attn_probs[:, :, -self.num_pixels:, -self.num_pixels:] = img_attn_probs
+            
+            # ✅ [수정 1] 확률 합이 1.0이 되도록 다시 정규화 (매우 중요)
+            attn_probs = attn_probs / attn_probs.sum(dim=-1, keepdim=True)
+            
             hidden_states = torch.einsum('bhqk,bhkd->bhqd', attn_probs, value)
         else:
             hidden_states = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
@@ -268,7 +272,6 @@ class CustomFluxAttnProcessor2_0:
                 hidden_states[:, : encoder_hidden_states.shape[1]],
                 hidden_states[:, encoder_hidden_states.shape[1] :],
             )
-
             # linear proj
             hidden_states = attn.to_out[0](hidden_states)
             # dropout
