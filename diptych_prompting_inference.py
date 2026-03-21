@@ -186,7 +186,7 @@ class CustomFluxAttnProcessor2_0:
         self.step = 0
         self.attn_enforce = attn_enforce
 
-   def __call__(
+    def __call__(
         self,
         attn: Attention,
         hidden_states: torch.FloatTensor,
