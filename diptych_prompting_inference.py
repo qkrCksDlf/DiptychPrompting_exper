@@ -289,6 +289,8 @@ if __name__ == '__main__':
     parser.add_argument('--input_image_path', type=str, default='./assets/bear_plushie.jpg')
     parser.add_argument('--subject_name', type=str, default='bear plushie')
     parser.add_argument('--target_prompt', type=str, default='a photo of a bear plushie surfing on the beach')
+    parser.add_argument('--background_image_path', type=str, default=None)
+    parser.add_argument('--right_mask_path', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -326,12 +328,28 @@ if __name__ == '__main__':
         return segmented_image
 
 
-    def make_diptych(image):
+    def make_diptych(image, background_image=None):
         ref_image = np.array(image)
-        ref_image = np.concatenate([ref_image, np.zeros_like(ref_image)], axis=1)
+        if background_image is None:
+            right_image = np.zeros_like(ref_image)
+        else:
+            right_image = np.array(background_image.resize((ref_image.shape[1], ref_image.shape[0])).convert("RGB"))
+        ref_image = np.concatenate([ref_image, right_image], axis=1)
+        #ref_image = np.concatenate([ref_image, np.zeros_like(ref_image)], axis=1)
         ref_image = Image.fromarray(ref_image)
         return ref_image
-
+        
+    def build_control_mask(height, width, right_mask_image=None):
+            full_mask = np.concatenate([np.zeros((height, width), dtype=np.uint8), np.ones((height, width), dtype=np.uint8) * 255], axis=1)
+    
+            if right_mask_image is not None:
+                resized_mask = np.array(
+                    right_mask_image.resize((width, height), resample=Image.NEAREST).convert("L")
+                )
+                resized_mask = (resized_mask > 127).astype(np.uint8) * 255
+                full_mask[:, width:] = resized_mask
+    
+            return Image.fromarray(np.stack([full_mask] * 3, axis=-1))
 
     # Load image and mask
     width = args.width + args.pixel_offset * 2
@@ -344,13 +362,17 @@ if __name__ == '__main__':
     diptych_text_prompt = f"A diptych with two side-by-side images of same {subject_name}. On the left, {base_prompt}. On the right, replicate this {subject_name} exactly but as {target_prompt}"
 
     reference_image = load_image(args.input_image_path).resize((width, height)).convert("RGB")
+    background_image = load_image(args.background_image_path).convert("RGB") if args.background_image_path else None
+    right_mask_image = load_image(args.right_mask_path).convert("L") if args.right_mask_path else None
 
     ctrl_scale=args.ctrl_scale
     segmented_image = segment_image(reference_image, subject_name)
     mask_image = np.concatenate([np.zeros((height, width, 3)), np.ones((height, width, 3))*255], axis=1)
     mask_image = Image.fromarray(mask_image.astype(np.uint8))
     diptych_image_prompt = make_diptych(segmented_image)
-
+    mask_image = build_control_mask(height, width, right_mask_image=right_mask_image)
+    diptych_image_prompt = make_diptych(segmented_image, background_image=background_image)
+    
     new_attn_procs = base_attn_procs.copy()
     for i, (k, v) in enumerate(new_attn_procs.items()):
         new_attn_procs[k] = CustomFluxAttnProcessor2_0(height=height // 16, width=width // 16 * 2, attn_enforce=args.attn_enforce)
