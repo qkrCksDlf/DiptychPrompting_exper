@@ -281,7 +281,7 @@ class CustomFluxAttnProcessor2_0:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--attn_enforce', type=float, default=1.3)
+    parser.add_argument('--attn_enforce', type=float, default=1.0)
     parser.add_argument('--ctrl_scale', type=float, default=0.95)
     parser.add_argument('--width', type=int, default=768)
     parser.add_argument('--height', type=int, default=768)
